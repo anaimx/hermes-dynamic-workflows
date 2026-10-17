@@ -378,9 +378,9 @@ def _resolve_policy(cfg: Any) -> str:
     if policy != "inherit":
         return policy
     try:
-        from tools.approval import _get_approval_mode
+        from hermes_dynamic_workflows.host.compat import get_approval_mode_fn
 
-        mode = _get_approval_mode()
+        mode = get_approval_mode_fn()()
     except Exception:
         return "deny"  # can't read Hermes config -> safe default
     return {"manual": "ask", "smart": "smart", "off": "approve"}.get(mode, "deny")
@@ -459,10 +459,13 @@ def pre_tool_call_handler(
         return None
     try:
         from tools.approval import (
-            _smart_approve,
             detect_dangerous_command,
             load_permanent_allowlist,
         )
+
+        from hermes_dynamic_workflows.host.compat import get_smart_approve_fn
+
+        _smart_approve = get_smart_approve_fn()
     except Exception:
         return None  # can't classify -> don't risk a false block
     try:

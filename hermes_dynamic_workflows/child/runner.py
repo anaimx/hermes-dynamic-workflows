@@ -441,10 +441,13 @@ class HermesChildAgentRunner(ChildAgentRunner):
             reset_current_session_key = None
             if self._approval_session_key:
                 try:
-                    from tools.approval import (
-                        reset_current_session_key as _reset_current_session_key,
-                        set_current_session_key,
+                    from hermes_dynamic_workflows.host.compat import (
+                        get_reset_current_session_key_fn,
+                        get_set_current_session_key_fn,
                     )
+
+                    set_current_session_key = get_set_current_session_key_fn()
+                    _reset_current_session_key = get_reset_current_session_key_fn()
 
                     approval_token = set_current_session_key(self._approval_session_key)
                     reset_current_session_key = _reset_current_session_key
@@ -1054,9 +1057,9 @@ def _resolve_inherit_policy(policy: str) -> str:
     if policy != "inherit":
         return policy
     try:
-        from tools.approval import _get_approval_mode
+        from hermes_dynamic_workflows.host.compat import get_approval_mode_fn
 
-        mode = _get_approval_mode()
+        mode = get_approval_mode_fn()()
     except Exception:
         return "deny"
     return {"manual": "ask", "smart": "smart", "off": "approve"}.get(mode, "deny")
@@ -1107,7 +1110,9 @@ def _make_child_approval_callback(
     if clean == "smart":
         def _smart(command: str, description: str, **_: Any) -> str:
             try:
-                from tools.approval import _smart_approve
+                from hermes_dynamic_workflows.host.compat import get_smart_approve_fn
+
+                _smart_approve = get_smart_approve_fn()
             except Exception:
                 return "deny"
             try:
@@ -1163,7 +1168,11 @@ def _register_task_cwd(task_id: str, cwd: str) -> None:
 
 def _cleanup_task_cwd(task_id: str) -> None:
     try:
-        from tools.terminal_tool import cleanup_vm, clear_task_env_overrides
+        from tools.terminal_tool import clear_task_env_overrides
+
+        from hermes_dynamic_workflows.host.compat import get_cleanup_vm_fn
+
+        cleanup_vm = get_cleanup_vm_fn()
 
         clear_task_env_overrides(task_id)
         cleanup_vm(task_id)

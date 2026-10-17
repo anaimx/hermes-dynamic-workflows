@@ -32,8 +32,14 @@ def resolve_agent_type(name: str | None, *, cwd: str | None = None) -> AgentType
     if path is not None:
         return _load_agent_type_file(clean, path)
 
-    for spec in list_agent_types(cwd=cwd):
+    specs = list_agent_types(cwd=cwd)
+    for spec in specs:
         if spec.name == clean:
+            return spec
+    # Claude Code scripts spell bundled types "Explore"/"Plan"; files are lowercase.
+    folded = clean.casefold()
+    for spec in specs:
+        if spec.name.casefold() == folded:
             return spec
     return None
 

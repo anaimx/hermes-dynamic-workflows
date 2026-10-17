@@ -165,6 +165,8 @@ class WorkflowRunManager:
             if token_budget_total_override is not None
             else parse_token_budget(user_task)
         )
+        if token_budget is None and config.default_token_budget > 0:
+            token_budget = config.default_token_budget
         # Captured in the launching (parent) context, which carries the gateway
         # session vars when the run is started from a gateway session.
         session_context = (

@@ -33,6 +33,8 @@ class PluginConfig:
         "memory",
         "messaging",
         "clarify",
+        # Fork: agent-to-agent bridges must never be reachable from workflow children.
+        "a2a",
     )
     # Per-agent model override (agent(model=...)) is allowed by default,
     # matching per-agent / per-stage model routing; the default is still the
@@ -75,6 +77,9 @@ class PluginConfig:
     # notify_result_preview_chars to protect context/chat length.
     notify_on_complete: bool = True
     notify_result_preview_chars: int = 2000
+    # Fork: fallback hard token ceiling used when the user gave no "+500k"
+    # directive. 0 disables it (upstream behaviour: unbounded).
+    default_token_budget: int = 0
 
 
 def _as_int(value: Any, default: int, *, minimum: int = 1, maximum: int | None = None) -> int:
@@ -224,5 +229,11 @@ def load_config() -> PluginConfig:
             default.notify_result_preview_chars,
             minimum=0,
             maximum=20000,
+        ),
+        default_token_budget=_as_int(
+            os.getenv("HERMES_DYNAMIC_WORKFLOWS_DEFAULT_TOKEN_BUDGET", raw.get("default_token_budget")),
+            default.default_token_budget,
+            minimum=0,
+            maximum=1_000_000_000,
         ),
     )
