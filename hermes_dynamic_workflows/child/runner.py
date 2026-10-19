@@ -8,6 +8,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 import unicodedata
 import uuid
 import logging
@@ -19,7 +20,7 @@ from typing import Any
 from .presets import AgentTypeSpec, list_agent_types, resolve_agent_type
 from .worktree import WorkspaceLease, create_workspace_lease
 from ..core.config import PluginConfig
-from ..core.errors import ChildAgentError, ChildAgentSkipped, WorkflowTimeout
+from ..core.errors import ChildAgentError, ChildAgentSkipped, ChildLimitExceeded, WorkflowTimeout
 from .structured_output import (
     MAX_STRUCTURED_OUTPUT_RETRIES,
     STRUCTURED_OUTPUT_CONTINUE_MESSAGE,
@@ -40,6 +41,9 @@ except ImportError:
     _wcswidth = None
 
 logger = logging.getLogger(__name__)
+
+# Fork: how often the parent thread checks a running child's hard limits.
+LIMIT_POLL_SECONDS = 1.0
 
 _CHILD_EXCLUDED_TOOL_NAMES = frozenset({"skill_manage"})
 
@@ -159,6 +163,7 @@ class HermesChildAgentRunner(ChildAgentRunner):
             )
         if resolved is None:
             request = _apply_agent_type_defaults(request, agent_type)
+        request = _apply_default_child_model(self.config, request)
         lease = create_workspace_lease(
             cwd=base_cwd,
             isolation=request.isolation,
@@ -168,16 +173,7 @@ class HermesChildAgentRunner(ChildAgentRunner):
         )
         runtime = self._resolve_runtime(request)
         _prepare_mcp_tool_registry(self.config)
-        toolsets = _resolve_child_toolsets(
-            self.config,
-            request.toolsets,
-            agent_type.toolsets if agent_type else (),
-            include_discoverable=(
-                resolved is None
-                and agent_type is None
-                and not request.toolsets
-            ),
-        )
+        toolsets = _child_toolsets_for(self.config, request, agent_type, resolved)
         structured_tool = bool(request.structured_tool and request.schema)
         if structured_tool and STRUCTURED_OUTPUT_TOOLSET not in toolsets:
             toolsets = toolsets + [STRUCTURED_OUTPUT_TOOLSET]
@@ -507,8 +503,41 @@ class HermesChildAgentRunner(ChildAgentRunner):
             self._active_children[lease.task_id] = child
         future = executor.submit(_run)
         result: dict[str, Any] | None = None
+        token_limit = _effective_token_limit(self.config, request)
+        tool_call_limit = int(self.config.max_child_tool_calls or 0)
         try:
-            result = future.result(timeout=timeout) or {}
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise FuturesTimeoutError()
+                try:
+                    result = future.result(timeout=min(LIMIT_POLL_SECONDS, remaining)) or {}
+                    break
+                except FuturesTimeoutError:
+                    pass
+                breach = None
+                if token_limit:
+                    spent = _child_metadata(child, {}, lease, agent_type, toolsets)["tokens"]
+                    if spent >= token_limit:
+                        breach = f"child token limit exceeded ({spent} >= {token_limit} tokens)"
+                if breach is None and tool_call_limit:
+                    with live_lock:
+                        calls = live_tool_calls
+                    if calls >= tool_call_limit:
+                        breach = f"child tool call limit exceeded ({calls} >= {tool_call_limit} tool calls)"
+                if breach is not None:
+                    try:
+                        if hasattr(child, "interrupt"):
+                            child.interrupt(breach)
+                    except Exception:
+                        logger.debug("child interrupt failed", exc_info=True)
+                    try:
+                        future.result(timeout=LIMIT_POLL_SECONDS * 10)
+                    except Exception:
+                        pass
+                    _emit_progress({"activity": breach})
+                    raise ChildLimitExceeded(breach)
             content = str(result.get("final_response") or "")
             # A hard child failure (e.g. a non-retryable API error) returns an
             # "error" string and no usable final_response. Surface it as a real
@@ -656,6 +685,45 @@ def _apply_agent_type_defaults(
     )
 
 
+def _apply_default_child_model(
+    config: PluginConfig,
+    request: ChildAgentRequest,
+) -> ChildAgentRequest:
+    """Fork: use config.default_child_model when agent() named no model.
+    An explicit model (including \"inherit\") always wins."""
+    default_model = (getattr(config, "default_child_model", "") or "").strip()
+    if not default_model or (request.model or "").strip():
+        return request
+    return replace(request, model=default_model)
+
+
+def _effective_token_limit(config: PluginConfig, request: ChildAgentRequest) -> int:
+    limits = [
+        int(v)
+        for v in (getattr(config, "max_child_tokens", 0), request.token_limit)
+        if isinstance(v, (int, float)) and v > 0
+    ]
+    return min(limits) if limits else 0
+
+
+def _child_toolsets_for(
+    config: PluginConfig,
+    request: ChildAgentRequest,
+    agent_type: AgentTypeSpec | None,
+    resolved: Any,
+) -> list[str]:
+    return _resolve_child_toolsets(
+        config,
+        request.toolsets,
+        agent_type.toolsets if agent_type else (),
+        include_discoverable=(
+            resolved is None
+            and agent_type is None
+            and not request.toolsets
+        ),
+    )
+
+
 def _resolve_child_toolsets(
     config: PluginConfig,
     requested: list[str],
@@ -668,7 +736,7 @@ def _resolve_child_toolsets(
     if "*" in raw:
         wildcard = [ts for ts in config.default_child_toolsets if ts not in raw]
         raw = [item for item in raw if item != "*"] + wildcard
-    if include_discoverable:
+    if include_discoverable and getattr(config, "include_discoverable_toolsets", False):
         raw = list(raw) + _discoverable_child_toolsets(config)
     blocked = set(config.blocked_child_toolsets)
     cleaned: list[str] = []

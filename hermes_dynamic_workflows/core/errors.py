@@ -36,6 +36,11 @@ class ChildAgentError(WorkflowRuntimeError):
     """Raised when a child agent fails."""
 
 
+class ChildLimitExceeded(ChildAgentError):
+    """Fork: a single child hit its hard token or tool-call cap and was
+    interrupted mid-run."""
+
+
 class ChildAgentSkipped(DynamicWorkflowError):
     """Raised internally when one child agent is intentionally skipped."""
 

@@ -80,6 +80,15 @@ class PluginConfig:
     # Fork: fallback hard token ceiling used when the user gave no "+500k"
     # directive. 0 disables it (upstream behaviour: unbounded).
     default_token_budget: int = 0
+    # Fork: hard per-child caps, enforced while the child runs (0 = off).
+    max_child_tokens: int = 0
+    max_child_tool_calls: int = 0
+    # Fork: injecting every installed MCP/plugin toolset into default children
+    # cost ~67k tokens per trivial child. Opt in explicitly.
+    include_discoverable_toolsets: bool = False
+    # Fork: model used when agent() gives no model ("inherit" still means
+    # parent). Empty = upstream behaviour (inherit parent).
+    default_child_model: str = ""
 
 
 def _as_int(value: Any, default: int, *, minimum: int = 1, maximum: int | None = None) -> int:
@@ -236,4 +245,27 @@ def load_config() -> PluginConfig:
             minimum=0,
             maximum=1_000_000_000,
         ),
+        max_child_tokens=_as_int(
+            os.getenv("HERMES_DYNAMIC_WORKFLOWS_MAX_CHILD_TOKENS", raw.get("max_child_tokens")),
+            default.max_child_tokens,
+            minimum=0,
+            maximum=1_000_000_000,
+        ),
+        max_child_tool_calls=_as_int(
+            os.getenv("HERMES_DYNAMIC_WORKFLOWS_MAX_CHILD_TOOL_CALLS", raw.get("max_child_tool_calls")),
+            default.max_child_tool_calls,
+            minimum=0,
+            maximum=100_000,
+        ),
+        include_discoverable_toolsets=_as_bool(
+            os.getenv(
+                "HERMES_DYNAMIC_WORKFLOWS_INCLUDE_DISCOVERABLE_TOOLSETS",
+                raw.get("include_discoverable_toolsets"),
+            ),
+            default.include_discoverable_toolsets,
+        ),
+        default_child_model=str(
+            os.getenv("HERMES_DYNAMIC_WORKFLOWS_DEFAULT_CHILD_MODEL", raw.get("default_child_model"))
+            or default.default_child_model
+        ).strip(),
     )
