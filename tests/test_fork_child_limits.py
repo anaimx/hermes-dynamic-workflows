@@ -88,7 +88,7 @@ class ToolsetTests(unittest.TestCase):
         with mock.patch.object(runner_mod, "_discoverable_child_toolsets", return_value=["mcp-x"]):
             self.assertEqual(
                 runner_mod._child_toolsets_for(PluginConfig(), _request(), None, None),
-                ["web", "file", "terminal", "skills"],
+                ["terminal", "file"],
             )
 
     def test_runner_adds_discoverable_when_opted_in(self):
@@ -244,3 +244,43 @@ return await agent("b", {"label": "b"})
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LeanDefaultsAndConfigReloadTests(unittest.TestCase):
+    """Fork: lean child toolsets by default; manager re-reads config per launch."""
+
+    def test_default_child_toolsets_are_terminal_and_file_only(self):
+        # The 'skills' toolset pulls the full <available_skills> index (~80k chars)
+        # into every child prompt; 'web' adds schemas. Opt in per agent() instead.
+        self.assertEqual(PluginConfig().default_child_toolsets, ("terminal", "file"))
+        self.assertEqual(_resolve_child_toolsets(PluginConfig(), []), ["terminal", "file"])
+
+    def test_manager_without_explicit_config_reloads_each_access(self):
+        from hermes_dynamic_workflows.run import manager as manager_mod
+
+        at_init = PluginConfig(max_child_tokens=1)
+        first = PluginConfig(max_child_tokens=2)
+        edited = PluginConfig(max_child_tokens=3)
+        with mock.patch.object(manager_mod, "load_config", side_effect=[at_init, first, edited]):
+            mgr = manager_mod.WorkflowRunManager(store=mock.Mock())
+            self.assertEqual(mgr.config.max_child_tokens, 2)
+            # config.yaml edited between launches -> picked up without restart
+            self.assertEqual(mgr.config.max_child_tokens, 3)
+
+    def test_manager_with_explicit_config_keeps_it(self):
+        from hermes_dynamic_workflows.run import manager as manager_mod
+
+        pinned = PluginConfig(max_child_tokens=7)
+        with mock.patch.object(manager_mod, "load_config", side_effect=AssertionError("must not load")):
+            mgr = manager_mod.WorkflowRunManager(store=mock.Mock(), config=pinned)
+            self.assertIs(mgr.config, pinned)
+            self.assertIs(mgr.config, pinned)
+
+    def test_manager_falls_back_to_last_good_config_when_reload_fails(self):
+        from hermes_dynamic_workflows.run import manager as manager_mod
+
+        good = PluginConfig(max_child_tokens=3)
+        with mock.patch.object(manager_mod, "load_config", side_effect=[good, RuntimeError("bad yaml")]):
+            mgr = manager_mod.WorkflowRunManager(store=mock.Mock())
+            self.assertEqual(mgr.config.max_child_tokens, 3)
+            self.assertEqual(mgr.config.max_child_tokens, 3)

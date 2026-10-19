@@ -101,10 +101,11 @@ class ChildAgentTests(unittest.TestCase):
             ["web"],
         )
 
-    def test_default_child_toolsets_include_read_only_skills_surface(self):
+    def test_default_child_toolsets_are_lean(self):
+        # Fork: skills/web are opt-in per agent(); the skills index bloats prompts.
         self.assertEqual(
             _resolve_child_toolsets(PluginConfig(), []),
-            ["web", "file", "terminal", "skills"],
+            ["terminal", "file"],
         )
 
     def test_explicit_agent_type_does_not_gain_discoverable_toolsets(self):

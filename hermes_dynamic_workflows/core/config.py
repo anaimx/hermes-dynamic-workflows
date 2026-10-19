@@ -24,7 +24,9 @@ class PluginConfig:
     child_timeout_seconds: float = 300.0
     script_max_chars: int = 524288
     mcp_discovery_wait_seconds: float = 0.75
-    default_child_toolsets: tuple[str, ...] = ("web", "file", "terminal", "skills")
+    # Fork: lean default. 'skills' injects the full <available_skills> index
+    # (~80k chars) into every child prompt; request web/skills per agent() call.
+    default_child_toolsets: tuple[str, ...] = ("terminal", "file")
     blocked_child_toolsets: tuple[str, ...] = (
         "workflow",
         "workflows",

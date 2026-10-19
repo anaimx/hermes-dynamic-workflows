@@ -105,7 +105,7 @@ return await agent("inspect repo", {"label": "scan-agent"})
         self.assertEqual(result.value, "scan-agent:inspect repo")
         self.assertEqual(result.agent_count, 1)
         self.assertEqual(runner.requests[0].label, "scan-agent")
-        self.assertEqual(runner.requests[0].toolsets, ["web", "file", "terminal", "skills"])
+        self.assertEqual(runner.requests[0].toolsets, ["terminal", "file"])
         self.assertEqual(result.state.current_phase, "scan")
 
     def test_rejects_sync_workflow_function(self):

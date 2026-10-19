@@ -71,13 +71,35 @@ class WorkflowRunManager:
         enable_control: bool = False,
     ):
         self.store = store or WorkflowStore()
-        self.config = config or load_config()
+        # Fork: an explicit config is pinned; otherwise re-read plugin config on
+        # every access so cap/toolset edits in config.yaml apply to the next
+        # launch without a gateway restart. A failed reload keeps the last good one.
+        self._pinned_config = config
+        self._last_config: PluginConfig | None = config
+        if config is None:
+            self._last_config = load_config()
         self.control_owner = new_control_owner()
         self._runs: dict[str, ManagedRun] = {}
         self._lock = threading.RLock()
         self._control_listener: ControlListener | None = None
         if enable_control:
             self.start_control_listener()
+
+    @property
+    def config(self) -> PluginConfig:
+        if self._pinned_config is not None:
+            return self._pinned_config
+        try:
+            self._last_config = load_config()
+        except Exception:
+            if self._last_config is None:
+                raise
+        return self._last_config
+
+    @config.setter
+    def config(self, value: PluginConfig) -> None:
+        self._pinned_config = value
+        self._last_config = value
 
     def start_control_listener(self) -> bool:
         with self._lock:
